@@ -55,11 +55,16 @@ pub fn exit_qemu(exit_code: QemuExitStatus) {
     }
 }
 
-/// Entry point for `cargo xtest`
+#[test_case]
+fn trivial_test() {
+    assert_eq!(1, 1);
+}
+
 #[cfg(test)]
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     test_main();
+    serial_println!("Finished tests");
     loop {}
 }
 #[cfg(test)]
@@ -67,5 +72,3 @@ pub extern "C" fn _start() -> ! {
 fn panic(info: &PanicInfo) -> ! {
     test_panic_handler(info)
 }
-
-

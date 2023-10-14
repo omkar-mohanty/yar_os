@@ -3,9 +3,8 @@
 #![feature(custom_test_frameworks)]
 #![test_runner(titan_os::test_runner)]
 
-use titan_os::println;
 use core::panic::PanicInfo;
-
+use titan_os::{println, QemuExitStatus, exit_qemu};
 
 #[cfg(not(test))]
 #[panic_handler]
@@ -24,5 +23,7 @@ fn panic(info: &PanicInfo) -> ! {
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     println!("Hello World {}", "!");
+    #[cfg(test)]
+    exit_qemu(QemuExitStatus::Success);
     loop {}
 }
