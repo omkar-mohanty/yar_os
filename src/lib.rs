@@ -1,9 +1,12 @@
 #![no_std]
 #![no_main]
+#![feature(abi_x86_interrupt)]
 #![feature(custom_test_frameworks)]
 #![test_runner(crate::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
+pub mod gdt;
+pub mod interrupts;
 pub mod serial;
 pub mod vga_buffer;
 use core::panic::PanicInfo;
@@ -21,6 +24,11 @@ where
         self();
         serial_println!("[OK]");
     }
+}
+
+pub fn init() {
+    gdt::init();
+    interrupts::init_idt();
 }
 
 pub fn test_runner(tests: &[&dyn Testable]) {
@@ -63,6 +71,7 @@ fn trivial_test() {
 #[cfg(test)]
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    init();
     test_main();
     serial_println!("Finished tests");
     loop {}
