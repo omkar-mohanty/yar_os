@@ -1,10 +1,10 @@
 #![no_std]
 #![no_main]
- #![feature(abi_x86_interrupt)]
+#![feature(abi_x86_interrupt)]
 
 use core::panic::PanicInfo;
 use lazy_static::lazy_static;
-use titan_os::{serial_print, exit_qemu};
+use titan_os::{exit_qemu, serial_print};
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
 
 lazy_static! {
@@ -20,11 +20,13 @@ lazy_static! {
     };
 }
 
-extern "x86-interrupt" fn test_double_fault_handler(_interrupt_frame: InterruptStackFrame, _ec:u64) -> ! {
+extern "x86-interrupt" fn test_double_fault_handler(
+    _interrupt_frame: InterruptStackFrame,
+    _ec: u64,
+) -> ! {
     serial_print!("[OK]\n");
     exit_qemu(titan_os::QemuExitStatus::Success);
-    loop {
-    }
+    loop {}
 }
 
 #[no_mangle]
@@ -34,9 +36,6 @@ pub extern "C" fn _start() -> ! {
     init();
     stack_overflow();
     panic!("Double fault handler not called");
-    loop {
-        
-    }
 }
 
 fn init() {
