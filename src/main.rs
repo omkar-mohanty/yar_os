@@ -10,9 +10,7 @@ use alloc::boxed::Box;
 use bootloader::{entry_point, BootInfo};
 use core::panic::PanicInfo;
 use titan_os::{
-    allocator,
-    memory,
-    println,
+    allocator, memory, println,
     task::{executor::Executor, keyboard::print_keypresses, Task},
 };
 use x86_64::{

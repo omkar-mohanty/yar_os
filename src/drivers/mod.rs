@@ -1,12 +1,13 @@
-use conquer_once::spin::OnceCell;
+use pci::PCI_DEVICES;
 
-use crate::println;
+use pci::get_pci_devices;
 
-use pci::PCIS;
+mod network;
 mod pci;
+mod storage;
 
-static PCI_DEVICES: OnceCell<PCIS> = OnceCell::uninit();
 pub fn init() {
-    let pci_devices = pci::PCIS::new();
-    println!("Total {}", &pci_devices.len());
+    PCI_DEVICES
+        .try_init_once(|| get_pci_devices())
+        .expect("Could not initialize PCI devices");
 }

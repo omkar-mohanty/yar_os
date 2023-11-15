@@ -1,6 +1,39 @@
+use super::{network::NetworkSubClass, storage::StorageSubclass};
+use crate::println;
 use alloc::vec::Vec;
-use core::ops::Deref;
+use conquer_once::spin::OnceCell;
+use core::fmt;
 use x86_64::instructions::port::Port;
+
+pub static PCI_DEVICES: OnceCell<Vec<PCI>> = OnceCell::uninit();
+
+pub(super) fn get_pci_devices() -> Vec<PCI> {
+    let mut devices = Vec::new();
+    for bus in 0..=255 {
+        for slot in 0..32 {
+            for func in 0..8 {
+                let vendor =
+                    config_read_u16(bus, slot, func, PCIConfigRegisters::PCIVendorID as u8);
+                if vendor != 0xFFFF {
+                    let header_type =
+                        config_read_u8(bus, slot, func, PCIConfigRegisters::PCIHeaderType as u8);
+                    let header = Header::new(bus, slot, func);
+                    println!("{:#?}", header);
+                    devices.push(PCI {
+                        bus,
+                        slot,
+                        func,
+                        header,
+                    });
+                    if func == 0 && (header_type & 0x80) == 0 {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    devices
+}
 
 #[allow(dead_code)]
 pub enum PCIConfigRegisters {
@@ -42,6 +75,96 @@ fn config_address(bus: u8, slot: u8, func: u8, offset: u8) {
         | 0x80000000;
     unsafe {
         config_port.write(address);
+    }
+}
+
+#[allow(dead_code)]
+#[repr(u8)]
+pub enum ClassCode {
+    Unclassified = 0x0,
+    MassStorage(StorageSubclass) = 0x1,
+    Network(NetworkSubClass) = 0x2,
+    Display = 0x3,
+    Multimedia = 0x4,
+    Memory = 0x5,
+    Bridge = 0x6,
+    Communication = 0x7,
+    BaseSystemPeripheral = 0x8,
+    InputDevice = 0x9,
+    DockingStation = 0xA,
+    Processor = 0xB,
+    SerialBus = 0xC,
+    Wireless = 0xD,
+    Intelligent = 0xE,
+    SatelliteCommunication = 0xF,
+    Encryption = 0x10,
+    SignalProcessing = 0x11,
+    ProcessingAccellerator = 0x12,
+    NonEssential = 0x13,
+}
+
+impl From<u16> for ClassCode {
+    fn from(value: u16) -> Self {
+        let subclass = value as u8;
+        let class = (value >> 8) as u8;
+        use ClassCode::*;
+        match class {
+            0x1 => MassStorage(StorageSubclass::from(subclass)),
+            0x2 => Network(NetworkSubClass::from(subclass)),
+            0x3 => Display,
+            0x4 => Multimedia,
+            0x5 => Memory,
+            0x6 => Bridge,
+            0x7 => Communication,
+            0x8 => BaseSystemPeripheral,
+            0x9 => InputDevice,
+            0xA => DockingStation,
+            0xB => Processor,
+            0xC => SerialBus,
+            0xD => Wireless,
+            0xE => Intelligent,
+            0xF => SatelliteCommunication,
+            0x10 => Encryption,
+            0x11 => SignalProcessing,
+            0x12 => ProcessingAccellerator,
+            0x13 => NonEssential,
+            _ => Unclassified,
+        }
+    }
+}
+
+impl fmt::Debug for ClassCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use ClassCode::*;
+        let st = match self {
+            Unclassified => "Unclassified",
+            MassStorage(subclass) => {
+                subclass.fmt(f)?;
+                " Mass Storage"
+            }
+            Network(subclass) => {
+                subclass.fmt(f)?;
+                " Network"
+            }
+            Display => "Display",
+            Multimedia => "Multimedia",
+            Memory => "Memory",
+            Bridge => "Bridge",
+            Communication => "Communication",
+            BaseSystemPeripheral => "Base System Peripheral",
+            InputDevice => "Input Device",
+            DockingStation => "Docking Device",
+            Processor => "Processor",
+            SerialBus => "Serial Bus",
+            Wireless => "Wireless",
+            Intelligent => "Intelligent",
+            SatelliteCommunication => "Satellite Communication",
+            Encryption => "Encryption",
+            SignalProcessing => "Signal Processing",
+            ProcessingAccellerator => "Processing Accellerator",
+            NonEssential => "Non Essential",
+        };
+        f.write_str(st)
     }
 }
 
@@ -96,10 +219,112 @@ pub fn config_write_u8(bus: u8, slot: u8, func: u8, off: u8, data: u8) {
     };
 }
 
+struct NonBridgeHeader {
+    interrupt_line: Option<u8>,
+    interrupt_pin: Option<u8>
+}
+
+impl fmt::Debug for NonBridgeHeader {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(interrupt_line) = self.interrupt_line  {
+            f.write_fmt(format_args!("Interrupt Line : {}", interrupt_line))?;
+            f.write_str("\n")?;
+        }
+        if let Some(interrupt_pin) = self.interrupt_pin  {
+            f.write_fmt(format_args!("Interrupt Pin : {}", interrupt_pin))?;
+        }
+        Ok(())
+    }
+}
+
+pub enum HeaderType {
+    Type1,
+    Type2,
+    Unknown,
+}
+
+impl From<u8> for HeaderType {
+    fn from(value: u8) -> Self {
+        match value {
+            0x0 => HeaderType::Type1,
+            0x2 => HeaderType::Type2,
+            _ => HeaderType::Unknown,
+        }
+    }
+}
+
+impl fmt::Debug for HeaderType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use HeaderType::*;
+        let st = match self {
+            Type1 => "Type 1",
+            Type2 => "Type 2",
+            Unknown => "Unknown",
+        };
+        f.write_str(st)
+    }
+}
+
+pub struct Header {
+    header_type: HeaderType,
+    class_code: ClassCode,
+    non_bridge_header: Option<NonBridgeHeader>
+}
+
+impl fmt::Debug for Header {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.header_type.fmt(f)?;
+        f.write_str("\n")?;
+        self.class_code.fmt(f)?;
+        f.write_str("\n")?;
+        if let Some(non_bridge_header) = &self.non_bridge_header  {
+            non_bridge_header.fmt(f)?;
+            f.write_str("\n")?;
+        }
+        Ok(())
+    }
+}
+
+impl Header {
+    pub fn new(bus: u8, slot: u8, func: u8) -> Self {
+        let val = config_read_u32(bus, slot, func, 0x8);
+        let class_code = ClassCode::from((val >> 16) as u16);
+
+        let val = config_read_u32(bus, slot, func, 0xC);
+        let header_type = HeaderType::from((val >> 16) as u8);
+
+        let non_bridge_header = match header_type {
+            HeaderType::Type1 => {
+                let mut non_bridge_header = NonBridgeHeader {
+                    interrupt_pin: None,
+                    interrupt_line: None,
+                };
+                let val = config_read_u32(bus, slot, func, 0x3C);
+                let interrupt_line = val as u8;
+                let interrupt_pin = (val >> 8) as u8;
+                if interrupt_line != 0xFF {
+                    non_bridge_header.interrupt_line = Some(interrupt_line);
+                }
+                if interrupt_pin != 0x0 {
+                    non_bridge_header.interrupt_pin = Some(interrupt_pin);
+                }
+                Some(non_bridge_header)
+            },
+            _ => None
+        };
+        Self {
+            class_code,
+            header_type,
+            non_bridge_header
+        }
+    }
+}
+
 pub struct PCI {
     bus: u8,
     slot: u8,
     func: u8,
+    header: Header,
 }
 
 impl PCI {
@@ -117,43 +342,5 @@ impl PCI {
     }
     pub fn config_read_u32(&self, off: u8) -> u32 {
         config_read_u32(self.bus, self.slot, self.func, off as u8)
-    }
-}
-
-pub struct PCIS {
-    devices: Vec<PCI>,
-}
-
-impl PCIS {
-    pub fn new() -> Self {
-        let mut devices = Vec::new();
-        for bus in 0..=255 {
-            for slot in 0..32 {
-                for func in 0..8 {
-                    let vendor =
-                        config_read_u16(bus, slot, func, PCIConfigRegisters::PCIVendorID as u8);
-                    if vendor != 0xFFFF {
-                        let header_type = config_read_u8(
-                            bus,
-                            slot,
-                            func,
-                            PCIConfigRegisters::PCIHeaderType as u8,
-                        );
-                        devices.push(PCI { bus, slot, func });
-                        if func == 0 && (header_type & 0x80) == 0 {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        Self { devices }
-    }
-}
-
-impl Deref for PCIS {
-    type Target = Vec<PCI>;
-    fn deref(&self) -> &Self::Target {
-        &self.devices
     }
 }
