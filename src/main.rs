@@ -6,17 +6,14 @@
 
 extern crate alloc;
 
-use alloc::boxed::Box;
 use bootloader::{entry_point, BootInfo};
 use core::panic::PanicInfo;
 use titan_os::{
     allocator, memory, println,
     task::{executor::Executor, keyboard::print_keypresses, Task},
+    BOOT_INFO,
 };
-use x86_64::{
-    structures::paging::{Page, Translate},
-    VirtAddr,
-};
+use x86_64::VirtAddr;
 
 #[cfg(not(test))]
 #[panic_handler]
@@ -35,6 +32,7 @@ fn panic(info: &PanicInfo) -> ! {
 entry_point!(kernel_main);
 
 fn kernel_main(boot_info: &'static BootInfo) -> ! {
+    BOOT_INFO.init_once(|| boot_info);
     titan_os::init();
     let phys_memory_offset = VirtAddr::new(boot_info.physical_memory_offset);
     let mut mapper = unsafe { memory::init(phys_memory_offset) };

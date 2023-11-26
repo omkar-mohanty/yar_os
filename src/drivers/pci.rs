@@ -1,13 +1,10 @@
 use super::{network::NetworkSubClass, storage::StorageSubclass};
-use crate::println;
 use alloc::vec::Vec;
-use conquer_once::spin::OnceCell;
+use bit_field::BitField;
 use core::fmt;
 use x86_64::instructions::port::Port;
 
-pub static PCI_DEVICES: OnceCell<Vec<PCI>> = OnceCell::uninit();
-
-pub(super) fn get_pci_devices() -> Vec<PCI> {
+pub(super) fn get_pci_devices() -> Vec<Pci> {
     let mut devices = Vec::new();
     for bus in 0..=255 {
         for slot in 0..32 {
@@ -18,8 +15,7 @@ pub(super) fn get_pci_devices() -> Vec<PCI> {
                     let header_type =
                         config_read_u8(bus, slot, func, PCIConfigRegisters::PCIHeaderType as u8);
                     let header = Header::new(bus, slot, func);
-                    println!("{:#?}", header);
-                    devices.push(PCI {
+                    devices.push(Pci {
                         bus,
                         slot,
                         func,
@@ -221,16 +217,16 @@ pub fn config_write_u8(bus: u8, slot: u8, func: u8, off: u8, data: u8) {
 
 struct NonBridgeHeader {
     interrupt_line: Option<u8>,
-    interrupt_pin: Option<u8>
+    interrupt_pin: Option<u8>,
 }
 
 impl fmt::Debug for NonBridgeHeader {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(interrupt_line) = self.interrupt_line  {
+        if let Some(interrupt_line) = self.interrupt_line {
             f.write_fmt(format_args!("Interrupt Line : {}", interrupt_line))?;
             f.write_str("\n")?;
         }
-        if let Some(interrupt_pin) = self.interrupt_pin  {
+        if let Some(interrupt_pin) = self.interrupt_pin {
             f.write_fmt(format_args!("Interrupt Pin : {}", interrupt_pin))?;
         }
         Ok(())
@@ -255,20 +251,19 @@ impl From<u8> for HeaderType {
 
 impl fmt::Debug for HeaderType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use HeaderType::*;
         let st = match self {
-            Type1 => "Type 1",
-            Type2 => "Type 2",
-            Unknown => "Unknown",
+            HeaderType::Type1 => "Type 1",
+            HeaderType::Type2 => "Type 2",
+            HeaderType::Unknown => "Unknown",
         };
         f.write_str(st)
     }
 }
 
 pub struct Header {
-    header_type: HeaderType,
-    class_code: ClassCode,
-    non_bridge_header: Option<NonBridgeHeader>
+    pub header_type: HeaderType,
+    pub class_code: ClassCode,
+    pub non_bridge_header: Option<NonBridgeHeader>,
 }
 
 impl fmt::Debug for Header {
@@ -277,7 +272,7 @@ impl fmt::Debug for Header {
         f.write_str("\n")?;
         self.class_code.fmt(f)?;
         f.write_str("\n")?;
-        if let Some(non_bridge_header) = &self.non_bridge_header  {
+        if let Some(non_bridge_header) = &self.non_bridge_header {
             non_bridge_header.fmt(f)?;
             f.write_str("\n")?;
         }
@@ -290,8 +285,8 @@ impl Header {
         let val = config_read_u32(bus, slot, func, 0x8);
         let class_code = ClassCode::from((val >> 16) as u16);
 
-        let val = config_read_u32(bus, slot, func, 0xC);
-        let header_type = HeaderType::from((val >> 16) as u8);
+        let val = config_read_u8(bus, slot, func, PCIConfigRegisters::PCIHeaderType as u8);
+        let header_type = HeaderType::from(val);
 
         let non_bridge_header = match header_type {
             HeaderType::Type1 => {
@@ -309,38 +304,119 @@ impl Header {
                     non_bridge_header.interrupt_pin = Some(interrupt_pin);
                 }
                 Some(non_bridge_header)
-            },
-            _ => None
+            }
+            _ => None,
         };
         Self {
             class_code,
             header_type,
-            non_bridge_header
+            non_bridge_header,
         }
     }
 }
 
-pub struct PCI {
+pub enum Bar {
+    Memory32 {
+        size: u32,
+        address: u32,
+        prefetchable: bool,
+    },
+    Memory64 {
+        size: u64,
+        address: u64,
+        prefetchable: bool,
+    },
+    Io(u32),
+}
+
+pub struct Pci {
     bus: u8,
     slot: u8,
     func: u8,
-    header: Header,
+    pub(super) header: Header,
 }
 
-impl PCI {
+impl Pci {
     pub fn config_read_u8(&self, off: u8) -> u8 {
-        config_read_u8(self.bus, self.slot, self.func, off as u8)
+        config_read_u8(self.bus, self.slot, self.func, off)
     }
     pub fn config_write_u8(&self, off: u8, val: u8) {
-        config_write_u8(self.bus, self.slot, self.func, off as u8, val)
+        config_write_u8(self.bus, self.slot, self.func, off, val)
     }
     pub fn config_read_u16(&self, off: u8) -> u16 {
-        config_read_u16(self.bus, self.slot, self.func, off as u8)
+        config_read_u16(self.bus, self.slot, self.func, off)
     }
     pub fn config_write_u16(&self, off: u8, val: u16) {
-        config_write_u16(self.bus, self.slot, self.func, off as u8, val)
+        config_write_u16(self.bus, self.slot, self.func, off, val)
     }
     pub fn config_read_u32(&self, off: u8) -> u32 {
-        config_read_u32(self.bus, self.slot, self.func, off as u8)
+        config_read_u32(self.bus, self.slot, self.func, off)
+    }
+    pub fn config_write_u32(&self, off: u8, val: u32) {
+        config_write_u32(self.bus, self.slot, self.func, off, val)
+    }
+
+    pub fn get_bar(&self, bar: u8) -> Option<Bar> {
+        let off = 0x10 + bar * 4;
+        let bar = self.config_read_u32(off);
+
+        if !bar.get_bit(0) {
+            let address = bar.get_bits(4..32) << 4;
+            let prefetchable = bar.get_bit(3);
+
+            let size = {
+                self.config_write_u32(off, 0xffffffff);
+                let mut readback = self.config_read_u32(off);
+                self.config_write_u32(off, address);
+
+                if readback == 0x0 {
+                    return None;
+                }
+
+                readback.set_bits(0..4, 0);
+
+                1 << readback.trailing_zeros()
+            };
+
+            match bar.get_bits(1..3) {
+                0b00 => Some(Bar::Memory32 {
+                    address,
+                    prefetchable,
+                    size,
+                }),
+                0b10 => {
+                    let address = {
+                        let mut address = address as u64;
+                        address.set_bits(32..64, self.config_read_u32(off + 4).into());
+
+                        address
+                    };
+                    Some(Bar::Memory64 {
+                        address,
+                        size: size as u64,
+                        prefetchable,
+                    })
+                }
+                _ => None,
+            }
+        } else {
+            Some(Bar::Io(bar.get_bits(2..32)))
+        }
+    }
+
+    pub fn enable_bus_mastering(&self) {
+        let command = self.config_read_u16(0x4);
+        self.config_write_u16(0x4, command | (1 << 2));
+    }
+
+    pub fn enable_mmio(&self) {
+        let command = self.config_read_u16(0x4);
+        self.config_write_u16(0x4, command | (1 << 1));
+    }
+}
+
+impl fmt::Debug for Pci {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.header.fmt(f)
     }
 }

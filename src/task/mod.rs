@@ -20,6 +20,12 @@ impl TaskId {
     }
 }
 
+impl Default for TaskId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct Task {
     id: TaskId,
     future: Pin<Box<dyn Future<Output = ()>>>,

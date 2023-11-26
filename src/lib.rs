@@ -18,7 +18,17 @@ pub mod task;
 pub mod vga_buffer;
 
 use bootloader::{entry_point, BootInfo};
+use conquer_once::spin::OnceCell;
 use core::panic::PanicInfo;
+use x86_64::{PhysAddr, VirtAddr};
+
+pub static BOOT_INFO: OnceCell<&'static BootInfo> = OnceCell::uninit();
+
+pub(crate) fn phys_to_virt_addr(phys_addr: PhysAddr) -> VirtAddr {
+    let offset = BOOT_INFO.get().unwrap().physical_memory_offset;
+    let virt = offset + phys_addr.as_u64();
+    VirtAddr::new(virt)
+}
 
 pub trait Testable {
     fn run(&self);

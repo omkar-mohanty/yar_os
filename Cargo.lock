@@ -190,6 +190,7 @@ dependencies = [
 name = "titan_os"
 version = "0.1.0"
 dependencies = [
+ "bit_field",
  "bootloader",
  "conquer-once",
  "crossbeam-queue",

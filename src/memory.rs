@@ -1,10 +1,14 @@
 use bootloader::bootinfo::{MemoryMap, MemoryRegionType};
+use conquer_once::spin::OnceCell;
+use spin::Mutex;
 use x86_64::{
     structures::paging::{
         FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PhysFrame, Size4KiB,
     },
     PhysAddr, VirtAddr,
 };
+
+pub(crate) static FRAME_ALLOCATOR: OnceCell<Mutex<BootInfoFrameAllocator>> = OnceCell::uninit();
 
 pub struct BootInfoFrameAllocator {
     memory_map: &'static MemoryMap,
