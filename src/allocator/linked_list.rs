@@ -1,0 +1,80 @@
+use super::align_up;
+use core::mem;
+
+pub struct ListNode {
+    size: usize,
+    next: Option<&'static ListNode>,
+}
+
+impl ListNode {
+    pub const fn new(size: usize) -> Self {
+        Self { size, next: None }
+    }
+
+    fn start_addr(&self) -> usize {
+        self as *const Self as usize
+    }
+
+    fn end_addr(&self) -> usize {
+        self.start_addr() + self.size
+    }
+}
+
+pub struct LinkedListAllocator {
+    head: ListNode,
+}
+
+impl LinkedListAllocator {
+    pub const fn new() -> Self {
+        LinkedListAllocator {
+            head: ListNode::new(0),
+        }
+    }
+
+    fn find_region(&mut self, size: usize, align: usize) -> Option<(&'static ListNode, usize)> {
+        let mut current = &mut self.head;
+
+        while let Some(ref mut region) = current.next {
+            if let Ok(alloc) = Self::alloc_from_region(region, size, align) {
+                let next = current.next.unwrap().next.take();
+                let ret = Some((current.next.take().unwrap(), alloc));
+                current.next = next;
+                return ret;
+            } else {
+                current = &mut current.next.as_mut().unwrap();
+            }
+        }
+        None
+    }
+    fn alloc_from_region(region: &ListNode, size: usize, align: usize) -> Result<usize, ()> {
+        let alloc_start = align_up(region.start_addr(), align);
+        let alloc_end = alloc_start.checked_add(size).ok_or(())?;
+
+        if alloc_end < region.end_addr() {
+            return Err(());
+        }
+
+        let excess_size = region.end_addr() - alloc_end;
+
+        if excess_size > 0 && excess_size < mem::size_of::<ListNode>() {
+            return Err(());
+        }
+
+        Ok(alloc_start)
+    }
+
+    pub unsafe fn init(&mut self, heap_start: usize, heap_size: usize) {
+        self.add_free_region(heap_start, heap_size);
+    }
+
+    unsafe fn add_free_region(&mut self, addr: usize, size: usize) {
+        assert_eq!(align_up(addr, mem::size_of::<ListNode>()), addr);
+        assert!(size >= mem::size_of::<ListNode>());
+
+        let mut node = ListNode::new(size);
+        node.next = self.head.next.take();
+        let node_ptr = addr as *mut ListNode;
+        node_ptr.write(node);
+        self.head.next = Some(&mut *node_ptr)
+    }
+}
