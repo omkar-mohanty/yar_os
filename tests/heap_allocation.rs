@@ -53,6 +53,18 @@ fn many_boxes() {
     }
 }
 
+#[test_case]
+fn many_boxes_long_lived() {
+    let long = Box::new(1);
+
+    for i in 0 .. HEAP_SIZE {
+        let x = Box::new(i);
+        assert_eq!(*x, i);
+    }
+
+    assert_eq!(*long, 1);
+}
+
 #[panic_handler]
 fn panic(panic_info: &PanicInfo) -> ! {
     titan_os::test_panic_handler(panic_info)
