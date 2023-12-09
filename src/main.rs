@@ -13,7 +13,6 @@ use titan_os::{
     task::{executor::Executor, keyboard::print_keypresses, Task},
     BOOT_INFO,
 };
-use x86_64::VirtAddr;
 
 #[cfg(not(test))]
 #[panic_handler]
@@ -34,12 +33,8 @@ entry_point!(kernel_main);
 fn kernel_main(boot_info: &'static BootInfo) -> ! {
     BOOT_INFO.init_once(|| boot_info);
     titan_os::init();
-    let phys_memory_offset = VirtAddr::new(boot_info.physical_memory_offset);
-    let mut mapper = unsafe { memory::init(phys_memory_offset) };
-    let mut frame_allocator =
-        unsafe { memory::BootInfoFrameAllocator::init(&boot_info.memory_map) };
-
-    allocator::init_heap(&mut mapper, &mut frame_allocator).expect("Heap initialization failed");
+    let (mut mapper, frame_allocator) = unsafe { memory::init(&boot_info) };
+    allocator::init_heap(&mut mapper, frame_allocator).expect("Heap initialization failed");
     #[cfg(test)]
     test_main();
 

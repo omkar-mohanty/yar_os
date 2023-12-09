@@ -6,6 +6,7 @@
 #![reexport_test_harness_main = "test_main"]
 #![feature(asm_const)]
 #![feature(const_mut_refs)]
+#![feature(pointer_is_aligned)]
 extern crate alloc;
 
 pub mod allocator;
@@ -24,10 +25,33 @@ use x86_64::{PhysAddr, VirtAddr};
 
 pub static BOOT_INFO: OnceCell<&'static BootInfo> = OnceCell::uninit();
 
+enum ReadError {
+    Null,
+    NotAligned,
+}
+
+fn validate_read<T: Sized>(addr: &VirtAddr) -> Result<(), ReadError> {
+    let raw = addr.as_ptr::<T>();
+
+    if raw.is_null() {
+        return Err(ReadError::Null);
+    } else if !raw.is_aligned() {
+        return Err(ReadError::NotAligned);
+    }
+
+    Ok(())
+}
+
 pub(crate) fn phys_to_virt_addr(phys_addr: PhysAddr) -> VirtAddr {
     let offset = BOOT_INFO.get().unwrap().physical_memory_offset;
     let virt = offset + phys_addr.as_u64();
     VirtAddr::new(virt)
+}
+
+pub(crate) fn read_virt_addr<'a, T>(addr: &mut VirtAddr) -> Result<&'a mut T, ReadError> {
+    validate_read::<T>(addr)?;
+
+    Ok(unsafe { &mut *addr.as_mut_ptr() })
 }
 
 pub trait Testable {

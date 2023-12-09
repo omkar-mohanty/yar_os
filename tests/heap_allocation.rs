@@ -11,18 +11,15 @@ use bootloader::{entry_point, BootInfo};
 use core::panic::PanicInfo;
 use titan_os::{
     allocator::{self, HEAP_SIZE},
-    memory::{self, BootInfoFrameAllocator},
+    memory,
 };
-use x86_64::VirtAddr;
 
 entry_point!(main);
 
 fn main(boot_info: &'static BootInfo) -> ! {
     titan_os::init();
-    let phys_memory_offset = VirtAddr::new(boot_info.physical_memory_offset);
-    let mut mapper = unsafe { memory::init(phys_memory_offset) };
-    let mut frame_allocator = unsafe { BootInfoFrameAllocator::init(&boot_info.memory_map) };
-    allocator::init_heap(&mut mapper, &mut frame_allocator).expect("Initialization failed");
+    let (mut mapper, frame_allocator) = unsafe { memory::init(&boot_info) };
+    allocator::init_heap(&mut mapper, frame_allocator).expect("Initialization failed");
     test_main();
     loop {}
 }
@@ -53,11 +50,12 @@ fn many_boxes() {
     }
 }
 
+#[cfg(not(bump_allocator))]
 #[test_case]
 fn many_boxes_long_lived() {
     let long = Box::new(1);
 
-    for i in 0 .. HEAP_SIZE {
+    for i in 0..HEAP_SIZE {
         let x = Box::new(i);
         assert_eq!(*x, i);
     }

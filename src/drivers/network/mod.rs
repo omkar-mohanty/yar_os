@@ -1,26 +1,43 @@
-use crate::println;
 use alloc::vec::Vec;
 use conquer_once::spin::OnceCell;
 use core::fmt;
-use x86_64::{PhysAddr, VirtAddr};
+use x86_64::{structures::paging::FrameAllocator, PhysAddr, VirtAddr};
 
-use crate::{drivers::pci::Bar, phys_to_virt_addr};
+use crate::{
+    drivers::pci::Bar, memory::FRAME_ALLOCATOR, phys_to_virt_addr, read_virt_addr, ReadError,
+};
 
 use super::{
     pci::{ClassCode, Pci},
     Driver, PCI_DEVICES,
 };
 
+const TX_DESC_NUM: u32 = 32;
+const TX_DESC_SIZE: u32 = TX_DESC_NUM * core::mem::size_of::<TxRegister>() as u32;
+
 pub(super) static NETWORK_DEVICES: OnceCell<Vec<NetworkDriver>> = OnceCell::uninit();
 
-pub fn init() {
+pub fn init() -> Result<(), Error> {
     let mut network_devices = Vec::new();
     for pci in PCI_DEVICES.get().unwrap() {
         if let ClassCode::Network(_) = pci.header.class_code {
-            network_devices.push(NetworkDriver::new(pci));
+            network_devices.push(NetworkDriver::new(pci)?);
         }
     }
     NETWORK_DEVICES.init_once(|| network_devices);
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Error {
+    OutOfMemory,
+}
+
+impl From<ReadError> for Error {
+    fn from(_value: ReadError) -> Self {
+        Error::OutOfMemory
+    }
 }
 
 pub enum NetworkSubClass {
@@ -83,6 +100,29 @@ impl Driver for NetworkDriver {
     }
 }
 
+#[derive(Default)]
+#[repr(C, packed)]
+struct RxRegister {
+    addr: u64,
+    length: u16,
+    checksum: u16,
+    status: u8,
+    errors: u8,
+    special: u16,
+}
+
+#[derive(Default)]
+#[repr(C, packed)]
+struct TxRegister {
+    addr: u64,
+    len: u16,
+    cso: u8,
+    cmd: u8,
+    status: u8,
+    css: u8,
+    special: u16,
+}
+
 pub struct NetworkDriver {
     base_register: VirtAddr,
     mac: [u8; 6],
@@ -135,7 +175,18 @@ impl NetworkDriver {
         }
         mac
     }
-    pub fn new(pci: &Pci) -> Self {
+
+    fn init_tx(&mut self) -> Result<(), Error> {
+        let mut frame_allocator = FRAME_ALLOCATOR.try_get().unwrap().lock();
+
+        let frame = frame_allocator.allocate_frame().unwrap();
+        let phys = frame.start_address();
+        let mut addr = phys_to_virt_addr(phys);
+        let descriptors = read_virt_addr::<[TxRegister; TX_DESC_NUM as usize]>(&mut addr)?;
+        Ok(())
+    }
+
+    pub fn new(pci: &Pci) -> Result<Self, Error> {
         pci.enable_mmio();
         pci.enable_bus_mastering();
         let bar = pci.get_bar(0);
@@ -157,12 +208,10 @@ impl NetworkDriver {
             eeprom: false,
         };
 
+        this.init_tx()?;
+
         this.eeprom = this.detect_eeprom();
         this.mac = this.get_mac_address();
-        println!(
-            "e1000: MAC address {:x}:{:x}:{:x}:{:x}:{:x}:{:x}",
-            this.mac[0], this.mac[1], this.mac[2], this.mac[3], this.mac[4], this.mac[5]
-        );
-        this
+        Ok(this)
     }
 }

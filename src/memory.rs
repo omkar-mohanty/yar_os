@@ -1,10 +1,17 @@
-use bootloader::bootinfo::{MemoryMap, MemoryRegionType};
+use bootloader::{
+    bootinfo::{MemoryMap, MemoryRegionType},
+    BootInfo,
+};
+use conquer_once::spin::OnceCell;
+use spin::Mutex;
 use x86_64::{
     structures::paging::{
         FrameAllocator, Mapper, OffsetPageTable, Page, PageTable, PhysFrame, Size4KiB,
     },
     PhysAddr, VirtAddr,
 };
+
+pub static FRAME_ALLOCATOR: OnceCell<Mutex<BootInfoFrameAllocator>> = OnceCell::uninit();
 
 pub struct BootInfoFrameAllocator {
     memory_map: &'static MemoryMap,
@@ -63,9 +70,15 @@ pub fn example_mapping(
     map_to_result.expect("map_to failed").flush();
 }
 
-pub unsafe fn init(page_offset_address: VirtAddr) -> OffsetPageTable<'static> {
+pub unsafe fn init(
+    boot_info: &'static BootInfo,
+) -> (OffsetPageTable<'static>, BootInfoFrameAllocator) {
+    let page_offset_address = VirtAddr::new(boot_info.physical_memory_offset);
     let active_level_4_page_table = active_level_4_table(page_offset_address);
-    OffsetPageTable::new(active_level_4_page_table, page_offset_address)
+    (
+        OffsetPageTable::new(active_level_4_page_table, page_offset_address),
+        BootInfoFrameAllocator::init(&boot_info.memory_map),
+    )
 }
 
 unsafe fn active_level_4_table(page_offset_address: VirtAddr) -> &'static mut PageTable {
